@@ -4,7 +4,6 @@ LDFLAGS      = $(shell llvm-config --ldflags | tr '\n' ' ') -Wl,--exclude-libs,A
 BUILDDIR     = build
 DEPDIR       = $(BUILDDIR)/.deps
 DEPFLAGS     = -MT $@ -MMD -MP -MF $(DEPDIR)/$*.d
-
 TESTS             = inter-constantprop
 OPTIMIZER_SOURCES = interConstPropPass.cpp
 OPTIMIZER_LIBS    = $(OPTIMIZER_SOURCES:%.cpp=$(BUILDDIR)/%.so)
@@ -16,28 +15,29 @@ DEPFILES          = $(OPTIMIZER_SOURCES:%.cpp=$(DEPDIR)/%.d)
 .SECONDARY:
 
 all: $(OPTIMIZER_LIBS)
+
 tests: $(TESTS_PRE) $(TESTS_OUT)
 
 clean:
-        rm -rf $(BUILDDIR)
+	rm -rf $(BUILDDIR)
 
 $(BUILDDIR)/%.o: %.cpp $(DEPDIR)/%.d | $(DEPDIR) $(BUILDDIR)
-        $(CXX) $(DEPFLAGS) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(DEPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILDDIR)/%.so: $(BUILDDIR)/%.o
-        $(CXX) -shared $^ -o $@ $(LDFLAGS)
+	$(CXX) -shared $^ -o $@ $(LDFLAGS)
 
 $(BUILDDIR)/tests/%-opt.bc: tests/%-test.bc $(OPTIMIZER_LIBS) | $(BUILDDIR)/tests
-        opt -bugpoint-enable-legacy-pm=1 $(OPTIMIZER_LIBS:%=-load-pass-plugin=%) -passes='inter-constantprop' $< -o $@
+	opt -bugpoint-enable-legacy-pm=1 $(OPTIMIZER_LIBS:%=-load-pass-plugin=%) -passes='inter-constantprop' $< -o $@
 
 $(BUILDDIR)/tests/%-opt.ll: $(BUILDDIR)/tests/%-opt.bc
-        llvm-dis $< -o $@
+	llvm-dis $< -o $@
 
 $(BUILDDIR)/tests/%-m2r.ll: tests/%-test.bc | $(BUILDDIR)/tests
-        llvm-dis $< -o $@
+	llvm-dis $< -o $@
 
 $(DEPDIR) $(BUILDDIR) $(BUILDDIR)/tests:
-        @mkdir -p $@
+	@mkdir -p $@
 
 $(DEPFILES):
 -include $(wildcard $(DEPFILES))
