@@ -291,6 +291,10 @@ struct
             /* Not sure if we can just use this one or if we need our own, if we need our own than this is TODO as well*/
             CallGraph &CG = AM.getResult<CallGraphAnalysis>(M);
             /* TODO 1: Iterate over the call graph and get summaries of each function, each summary will be the intra const prop run where it determines the state (TOP,const,BOT) for the arguments passed into the function and the return. Looks like scc will be required for iterating and will help with recusive functions */
+            for (Function& F : M)
+            {
+                intra_function_run(F);
+            }
             /* Needs before this run function is edited:
             - Create summary struct with states for args and return
             - Edit intra run function to take in summary and fill out those field
