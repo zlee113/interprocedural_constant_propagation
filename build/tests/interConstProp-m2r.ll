@@ -1,4 +1,4 @@
-; ModuleID = 'constantprop-test-m2r.bc'
+; ModuleID = 'tests/interConstProp-test-m2r.bc'
 source_filename = "constantprop-cfg-test-m2r.ll"
 
 define i32 @test_cfg_merge_loop(i1 %cond, i32 %n) {

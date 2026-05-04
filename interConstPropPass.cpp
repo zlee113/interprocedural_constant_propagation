@@ -20,11 +20,7 @@
 
 using namespace llvm;
 
-/*
- */
-struct
-
-    namespace
+namespace
 {
     /* Enum to rep the different kinds of values something can pass as */
     enum class Kind
@@ -170,7 +166,7 @@ struct
      * @param states The entire map
      * @return CPState
      */
-    static CPState transferBlock(BasicBlock & BB, const CPState &in,
+    static CPState transferBlock(BasicBlock &BB, const CPState &in,
                                  const DenseMap<const BasicBlock *, BlockState> &states)
     {
         CPState out = in;
@@ -200,8 +196,44 @@ struct
      */
     struct InterConstPropPass : PassInfoMixin<InterConstPropPass>
     {
+        static bool sameState(const CPState &a, const CPState &b, const std::vector<const Value *> &domain)
+        {
+            for (const Value *V : domain)
+            {
+                LVal av = a.lookup(V);
+                LVal bv = b.lookup(V);
+                if (av != bv)
+                    return false;
+            }
+            return true;
+        }
+
+        static void printState(raw_ostream &OS, StringRef label, const CPState &st,
+                               const std::vector<const Value *> &domain, bool showTop = true)
+        {
+            OS << "  " << label << ": { ";
+            bool first = true;
+            for (const Value *V : domain)
+            {
+                LVal v = st.lookup(V);
+                if (!showTop && v.kind == Kind::Top)
+                    continue;
+                if (!first)
+                    OS << "; ";
+                first = false;
+                V->printAsOperand(OS, false);
+                if (v.kind == Kind::Const)
+                    OS << " = " << v.c;
+                else if (v.kind == Kind::Bottom)
+                    OS << " = NAC";
+                else
+                    OS << " = TOP";
+            }
+            OS << " }\n";
+        }
+
         /* The function pass for const prop (UNCHANGED AS OF RIGHT NOW)*/
-        PreservedAnalyses intra_function_run(Function &F, FunctionAnalysisManager &)
+        void intra_function_run(Function &F)
         {
             outs() << "=== ";
             F.printAsOperand(outs(), false);
@@ -281,8 +313,6 @@ struct
                 printState(outs(), "IN", st[BB].in, domain);
                 printState(outs(), "OUT", st[BB].out, domain);
             }
-
-            return;
         }
         /* The run function for the module*/
         PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM)
@@ -291,7 +321,7 @@ struct
             /* Not sure if we can just use this one or if we need our own, if we need our own than this is TODO as well*/
             CallGraph &CG = AM.getResult<CallGraphAnalysis>(M);
             /* TODO 1: Iterate over the call graph and get summaries of each function, each summary will be the intra const prop run where it determines the state (TOP,const,BOT) for the arguments passed into the function and the return. Looks like scc will be required for iterating and will help with recusive functions */
-            for (Function& F : M)
+            for (Function &F : M)
             {
                 intra_function_run(F);
             }
@@ -314,7 +344,7 @@ struct
 
             return PreservedAnalyses::all();
         }
-    }
+    };
 }
 
 extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo
