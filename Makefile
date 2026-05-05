@@ -5,7 +5,7 @@ BUILDDIR     = build
 DEPDIR       = $(BUILDDIR)/.deps
 DEPFLAGS     = -MT $@ -MMD -MP -MF $(DEPDIR)/$*.d
 
-TESTS             = InterConstProp
+TESTS             = interconstprop
 OPTIMIZER_SOURCES = interConstPropPass.cpp
 OPTIMIZER_LIBS    = $(OPTIMIZER_SOURCES:%.cpp=$(BUILDDIR)/%.so)
 TESTS_PRE         = $(TESTS:%=$(BUILDDIR)/tests/%-m2r.ll)

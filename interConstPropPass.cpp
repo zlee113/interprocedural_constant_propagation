@@ -233,7 +233,7 @@ namespace
         }
 
         /* The function pass for const prop (UNCHANGED AS OF RIGHT NOW)*/
-        void intra_function_run(Function &F)
+        DenseMap<const BasicBlock *, BlockState> intra_function_run(Function &F)
         {
             outs() << "=== ";
             F.printAsOperand(outs(), false);
@@ -313,17 +313,78 @@ namespace
                 printState(outs(), "IN", st[BB].in, domain);
                 printState(outs(), "OUT", st[BB].out, domain);
             }
+            return st;
         }
+
+        /**
+         * @brief The summary contains the lval for the parameters passed into the function as well as the return value
+         */
+        struct summary_t
+        {
+            std::vector<LVal> params;      /**> Vector of the parameters LVal */
+            LVal return_val = LVal::top(); /**> Return values lval (defaulted to top) */
+        };
+
+        /**
+         * @brief Get the summary return object
+         *
+         * @param F The function to get the return for
+         * @param st The block state of the functions basic blocks via the itnra const prop pass
+         * @return summary_t The return summary field filled out
+         */
+        summary_t
+        get_summary_return(Function &F, DenseMap<const BasicBlock *, BlockState> st)
+        {
+            /* Iterate over the instructions and find any returns */
+            summary_t summary = {};
+            for (BasicBlock &BB : F)
+            {
+                for (Instruction &I : BB)
+                {
+                    if (auto *return_inst = dyn_cast<ReturnInst>(&I))
+                    {
+                        /* Evaluate the return and meet it with any prior or future returns */
+                        LVal return_lval = evalValue(return_inst, st.at(&BB).out);
+                        summary.return_val = meetVal(return_lval, summary.return_val);
+                    }
+                }
+            }
+            return summary;
+        }
+
         /* The run function for the module*/
-        PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM)
+        PreservedAnalyses
+        run(Module &M, ModuleAnalysisManager &AM)
         {
             /* Build call graph to figure out how to iterate over the functions so we can use the call graph to determine which functions call which and do the propagation in the right order */
             /* Not sure if we can just use this one or if we need our own, if we need our own than this is TODO as well*/
             CallGraph &CG = AM.getResult<CallGraphAnalysis>(M);
+            DenseMap<const Function *, summary_t> function_summaries;
+
             /* TODO 1: Iterate over the call graph and get summaries of each function, each summary will be the intra const prop run where it determines the state (TOP,const,BOT) for the arguments passed into the function and the return. Looks like scc will be required for iterating and will help with recusive functions */
-            for (Function &F : M)
+            DenseMap<const BasicBlock *, BlockState> function_state;
+            /* Iterate over the functions from the call graph via scc iterators */
+            for (auto it = scc_begin(&CG); it != scc_end(&CG); ++it)
             {
-                intra_function_run(F);
+                const std::vector<CallGraphNode *> &SCC = *it;
+                for (CallGraphNode *CGN : SCC)
+                {
+                    Function *F = CGN->getFunction();
+                    /* Call graph has null function pointer that segfauls skip it*/
+                    if (!F || F->isDeclaration())
+                        continue;
+
+                    function_state = intra_function_run(*F);
+                    function_summaries[F] = get_summary_return(*F, function_state);
+                    outs()
+                        << F->getName() << " return_val: ";
+                    if (function_summaries[F].return_val.kind == Kind::Const)
+                        outs() << "Const(" << function_summaries[F].return_val.c << ")\n";
+                    else if (function_summaries[F].return_val.kind == Kind::Top)
+                        outs() << "Top\n";
+                    else
+                        outs() << "Bottom\n";
+                }
             }
             /* Needs before this run function is edited:
             - Create summary struct with states for args and return
@@ -357,7 +418,7 @@ llvmGetPassPluginInfo()
                     [](StringRef Name, ModulePassManager &MPM,
                        ArrayRef<PassBuilder::PipelineElement>) -> bool
                     {
-                        if (Name == "InterConstProp")
+                        if (Name == "interconstprop")
                         {
                             MPM.addPass(InterConstPropPass());
                             return true;
