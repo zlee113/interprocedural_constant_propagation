@@ -407,28 +407,30 @@ namespace
                                 for (auto& arg : calledFunc->args())
                                 {
                                     outs() << arg << "\n";
-                                    //LVal paramVal = evalValue(cast<Value>(&arg), function_state.at(&BB).out);
-                                    //function_summaries[F].param = meetVal(return_lval, summary.return_val);
                                     //add to the summary the function arguments based on the function state we had before (it will already know if its constant or not)
-                                    //function_summaries[calledFunc].params.push_back();
+                                    LVal paramVal = evalValue(cast<Value>(&arg), function_state.at(&BB).out);
+                                    function_summaries[calledFunc].params.push_back(paramVal);
                                 }
                             }
                         }
                     }
+                }
+            }
 
-                    for (int i = 0; i < function_summaries[F].params.size(); i++)
-                    {
 
-                        outs()
-                            << F->getName() << " Params: ";
-                        if (function_summaries[F].params[i].kind == Kind::Const)
-                            outs() << "Const(" << function_summaries[F].params[i].c << ")\n";
-                        else if (function_summaries[F].params[i].kind == Kind::Top)
-                            outs() << "Top\n";
-                        else
-                            outs() << "Bottom\n";
-                    }
 
+            for (Function& F : M)
+            {
+                for (int i = 0; i < F.arg_size(); i++)
+                {
+                    outs()
+                        << F.getName() << " Params: ";
+                    if (function_summaries[&F].params[i].kind == Kind::Const)
+                        outs() << "Const(" << function_summaries[&F].params[i].c << ")\n";
+                    else if (function_summaries[&F].params[i].kind == Kind::Top)
+                        outs() << "Top\n";
+                    else
+                        outs() << "Bottom\n";
                 }
             }
 
