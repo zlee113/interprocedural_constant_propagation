@@ -64,7 +64,7 @@ namespace
      */
     struct summary_t
     {
-        std::vector<LVal> params;      /**> Vector of the parameters LVal */
+        DenseMap<const Value *, LVal> params;      /**> Vector of the parameters LVal */
         LVal return_val = LVal::top(); /**> Return values lval (defaulted to top) */
     };
 
@@ -184,6 +184,15 @@ namespace
             if (I.getType()->isVoidTy())
                 continue;
 
+            //Check if basically anything used is in this functions arg list and check if its constant, replace the out with that constant value for the instructions parameter
+            for (auto& Op : I.operands())
+            {
+                if (isa<Argument>(Op))
+                {
+                    out[&I] = summaries[BB.getParent()].params[cast<Value>( & Op)];
+                }
+            }
+
             if (auto *P = dyn_cast<PHINode>(&I))
             {
                 out[&I] = evalPhi(*P, states);
@@ -200,8 +209,6 @@ namespace
             {
                 out[&I] = LVal::top();
             }
-
-            //Check if basically anything used is in this functions arg list and check if its constant, replace the out with that constant value for the instructions parameter
         }
 
         return out;
@@ -343,7 +350,7 @@ namespace
         get_summary_return(Function &F, DenseMap<const BasicBlock *, BlockState> st)
         {
             /* Iterate over the instructions and find any returns */
-            summary_t summary = {};
+            summary_t summary;
             for (BasicBlock &BB : F)
             {
                 for (Instruction &I : BB)
@@ -409,7 +416,7 @@ namespace
                                     outs() << arg << "\n";
                                     //add to the summary the function arguments based on the function state we had before (it will already know if its constant or not)
                                     LVal paramVal = evalValue(cast<Value>(&arg), function_state.at(&BB).out);
-                                    function_summaries[calledFunc].params.push_back(paramVal);
+                                    function_summaries[calledFunc].params[&arg] = (meetVal(paramVal, function_summaries[F].return_val));
                                 }
                             }
                         }
@@ -421,13 +428,13 @@ namespace
 
             for (Function& F : M)
             {
-                for (int i = 0; i < F.arg_size(); i++)
+                for (auto& arg : F.args())
                 {
                     outs()
                         << F.getName() << " Params: ";
-                    if (function_summaries[&F].params[i].kind == Kind::Const)
-                        outs() << "Const(" << function_summaries[&F].params[i].c << ")\n";
-                    else if (function_summaries[&F].params[i].kind == Kind::Top)
+                    if (function_summaries[&F].params[&arg].kind == Kind::Const)
+                        outs() << "Const(" << function_summaries[&F].params[&arg].c << ")\n";
+                    else if (function_summaries[&F].params[&arg].kind == Kind::Top)
                         outs() << "Top\n";
                     else
                         outs() << "Bottom\n";
