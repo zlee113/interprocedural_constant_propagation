@@ -200,7 +200,10 @@ namespace
             {
                 out[&I] = LVal::top();
             }
+
+            //Check if basically anything used is in this functions arg list and check if its constant, replace the out with that constant value for the instructions parameter
         }
+
         return out;
     }
 
@@ -378,7 +381,10 @@ namespace
                     if (!F || F->isDeclaration())
                         continue;
 
+                    //do the basic intro constant prop
                     function_state = intra_function_run(*F, function_summaries);
+
+                    //check the return val of the current function
                     function_summaries[F] = get_summary_return(*F, function_state);
                     outs()
                         << F->getName() << " return_val: ";
@@ -388,8 +394,44 @@ namespace
                         outs() << "Top\n";
                     else
                         outs() << "Bottom\n";
+
+                    //iterate through function to find function calls
+                    for (auto& BB : *F)
+                    {
+                        for (auto& I : BB)
+                        {
+                            //figure out if instruction is a function call
+                            if (isa<CallInst>(I))
+                            {
+                                Function* calledFunc = cast<CallInst>(I).getCalledFunction();
+                                for (auto& arg : calledFunc->args())
+                                {
+                                    outs() << arg << "\n";
+                                    //LVal paramVal = evalValue(cast<Value>(&arg), function_state.at(&BB).out);
+                                    //function_summaries[F].param = meetVal(return_lval, summary.return_val);
+                                    //add to the summary the function arguments based on the function state we had before (it will already know if its constant or not)
+                                    //function_summaries[calledFunc].params.push_back();
+                                }
+                            }
+                        }
+                    }
+
+                    for (int i = 0; i < function_summaries[F].params.size(); i++)
+                    {
+
+                        outs()
+                            << F->getName() << " Params: ";
+                        if (function_summaries[F].params[i].kind == Kind::Const)
+                            outs() << "Const(" << function_summaries[F].params[i].c << ")\n";
+                        else if (function_summaries[F].params[i].kind == Kind::Top)
+                            outs() << "Top\n";
+                        else
+                            outs() << "Bottom\n";
+                    }
+
                 }
             }
+
             /* Needs before this run function is edited:
             - Create summary struct with states for args and return
             - Edit intra run function to take in summary and fill out those field
