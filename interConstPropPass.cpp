@@ -60,6 +60,15 @@ namespace
     };
 
     /**
+     * @brief The summary contains the lval for the parameters passed into the function as well as the return value
+     */
+    struct summary_t
+    {
+        std::vector<LVal> params;      /**> Vector of the parameters LVal */
+        LVal return_val = LVal::top(); /**> Return values lval (defaulted to top) */
+    };
+
+    /**
      * @brief Meet function for constant propagation
      *
      * @param a LVal to use for meet eval
@@ -167,7 +176,7 @@ namespace
      * @return CPState
      */
     static CPState transferBlock(BasicBlock &BB, const CPState &in,
-                                 const DenseMap<const BasicBlock *, BlockState> &states)
+                                 const DenseMap<const BasicBlock *, BlockState> &states, DenseMap<const Function *, summary_t> summaries)
     {
         CPState out = in;
         for (Instruction &I : BB)
@@ -182,6 +191,10 @@ namespace
             else if (auto *BO = dyn_cast<BinaryOperator>(&I))
             {
                 out[&I] = evalBinary(*BO, out);
+            }
+            else if (auto *CI = dyn_cast<CallInst>(&I))
+            {
+                out[&I] = summaries[CI->getCalledFunction()].return_val;
             }
             else
             {
@@ -233,7 +246,7 @@ namespace
         }
 
         /* The function pass for const prop (UNCHANGED AS OF RIGHT NOW)*/
-        DenseMap<const BasicBlock *, BlockState> intra_function_run(Function &F)
+        DenseMap<const BasicBlock *, BlockState> intra_function_run(Function &F, DenseMap<const Function *, summary_t> summaries)
         {
             outs() << "=== ";
             F.printAsOperand(outs(), false);
@@ -296,7 +309,7 @@ namespace
                     }
 
                     st[BB].in = newIn;
-                    CPState newOut = transferBlock(*BB, newIn, st);
+                    CPState newOut = transferBlock(*BB, newIn, st, summaries);
                     if (!sameState(st[BB].out, newOut, domain))
                     {
                         st[BB].out = std::move(newOut);
@@ -317,15 +330,6 @@ namespace
         }
 
         /**
-         * @brief The summary contains the lval for the parameters passed into the function as well as the return value
-         */
-        struct summary_t
-        {
-            std::vector<LVal> params;      /**> Vector of the parameters LVal */
-            LVal return_val = LVal::top(); /**> Return values lval (defaulted to top) */
-        };
-
-        /**
          * @brief Get the summary return object
          *
          * @param F The function to get the return for
@@ -344,7 +348,7 @@ namespace
                     if (auto *return_inst = dyn_cast<ReturnInst>(&I))
                     {
                         /* Evaluate the return and meet it with any prior or future returns */
-                        LVal return_lval = evalValue(return_inst, st.at(&BB).out);
+                        LVal return_lval = evalValue(return_inst->getReturnValue(), st.at(&BB).out);
                         summary.return_val = meetVal(return_lval, summary.return_val);
                     }
                 }
@@ -374,7 +378,7 @@ namespace
                     if (!F || F->isDeclaration())
                         continue;
 
-                    function_state = intra_function_run(*F);
+                    function_state = intra_function_run(*F, function_summaries);
                     function_summaries[F] = get_summary_return(*F, function_state);
                     outs()
                         << F->getName() << " return_val: ";
