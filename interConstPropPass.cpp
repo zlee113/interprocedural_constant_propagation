@@ -64,8 +64,8 @@ namespace
      */
     struct summary_t
     {
-        DenseMap<const Value *, LVal> params;      /**> Vector of the parameters LVal */
-        LVal return_val = LVal::top(); /**> Return values lval (defaulted to top) */
+        DenseMap<const Value *, LVal> params; /**> Vector of the parameters LVal */
+        LVal return_val = LVal::top();        /**> Return values lval (defaulted to top) */
     };
 
     /**
@@ -179,21 +179,27 @@ namespace
                                  const DenseMap<const BasicBlock *, BlockState> &states, DenseMap<const Function *, summary_t> summaries)
     {
         CPState out = in;
+
+        /* Get the entry block to find the args */
+        Function *F = BB.getParent();
+        if (&BB == &F->getEntryBlock())
+        {
+            /* Iterate over the args */
+            for (auto &arg : F->args())
+            {
+                /* Repalce the out with the args value */
+                auto it = summaries[F].params.find(&arg);
+                if (it != summaries[F].params.end())
+                    out[&arg] = it->second;
+            }
+        }
+
         for (Instruction &I : BB)
         {
             if (I.getType()->isVoidTy())
                 continue;
 
-            //Check if basically anything used is in this functions arg list and check if its constant, replace the out with that constant value for the instructions parameter
-            for (auto& Op : I.operands())
-            {
-                if (isa<Argument>(Op))
-                {
-                    out[&I] = summaries[BB.getParent()].params[cast<Value>( & Op)];
-                }
-            }
-
-            if (auto *P = dyn_cast<PHINode>(&I))
+            else if (auto *P = dyn_cast<PHINode>(&I))
             {
                 out[&I] = evalPhi(*P, states);
             }
@@ -204,6 +210,39 @@ namespace
             else if (auto *CI = dyn_cast<CallInst>(&I))
             {
                 out[&I] = summaries[CI->getCalledFunction()].return_val;
+            }
+            else if (auto *ICMP = dyn_cast<ICmpInst>(&I))
+            {
+                /* Check both values of the cmp and see if both are constant */
+                LVal val1 = evalValue(ICMP->getOperand(0), out);
+                LVal val2 = evalValue(ICMP->getOperand(1), out);
+                if (val1.kind == Kind::Const && val2.kind == Kind::Const)
+                {
+                    if (ICMP->getPredicate() == ICmpInst::ICMP_EQ)
+                    {
+                        out[&I] = LVal::constant(val1.c == val2.c);
+                    }
+                    else if (ICMP->getPredicate() == ICmpInst::ICMP_NE)
+                    {
+                        out[&I] = LVal::constant(val1.c != val2.c);
+                    }
+                    else if (ICMP->getPredicate() == ICmpInst::ICMP_SLT)
+                    {
+                        out[&I] = LVal::constant(val1.c < val2.c);
+                    }
+                    else if (ICMP->getPredicate() == ICmpInst::ICMP_SGT)
+                    {
+                        out[&I] = LVal::constant(val1.c > val2.c);
+                    }
+                    else if (ICMP->getPredicate() == ICmpInst::ICMP_SLE)
+                    {
+                        out[&I] = LVal::constant(val1.c <= val2.c);
+                    }
+                    else if (ICMP->getPredicate() == ICmpInst::ICMP_SGE)
+                    {
+                        out[&I] = LVal::constant(val1.c >= val2.c);
+                    }
+                }
             }
             else
             {
@@ -263,6 +302,12 @@ namespace
             outs() << " ===\n";
 
             std::vector<const Value *> domain;
+            /* Add function arguments to the domain as well*/
+            for (auto &arg : F.args())
+            {
+                domain.push_back(&arg);
+            }
+
             for (auto &BB : F)
             {
                 for (auto &I : BB)
@@ -377,7 +422,9 @@ namespace
 
             /* TODO 1: Iterate over the call graph and get summaries of each function, each summary will be the intra const prop run where it determines the state (TOP,const,BOT) for the arguments passed into the function and the return. Looks like scc will be required for iterating and will help with recusive functions */
             DenseMap<const BasicBlock *, BlockState> function_state;
-            /* Iterate over the functions from the call graph via scc iterators */
+            DenseMap<const Function *, DenseMap<const BasicBlock *, BlockState>> all_function_state;
+            /* Get the order for the call graph */
+            std::vector<Function *> order;
             for (auto it = scc_begin(&CG); it != scc_end(&CG); ++it)
             {
                 const std::vector<CallGraphNode *> &SCC = *it;
@@ -387,78 +434,193 @@ namespace
                     /* Call graph has null function pointer that segfauls skip it*/
                     if (!F || F->isDeclaration())
                         continue;
+                    order.push_back(F);
+                }
+            }
 
-                    //do the basic intro constant prop
-                    function_state = intra_function_run(*F, function_summaries);
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+                /* Iterate over the functions from order vector (BOTTOM UP)*/
+                for (Function *F : order)
+                {
 
-                    //check the return val of the current function
-                    function_summaries[F] = get_summary_return(*F, function_state);
-                    outs()
-                        << F->getName() << " return_val: ";
-                    if (function_summaries[F].return_val.kind == Kind::Const)
-                        outs() << "Const(" << function_summaries[F].return_val.c << ")\n";
-                    else if (function_summaries[F].return_val.kind == Kind::Top)
-                        outs() << "Top\n";
-                    else
-                        outs() << "Bottom\n";
+                    // do the basic intro constant prop
+                    all_function_state[F] = intra_function_run(*F, function_summaries);
 
-                    //iterate through function to find function calls
-                    for (auto& BB : *F)
+                    // check the return val of the current function
+                    summary_t new_summary = get_summary_return(*F, all_function_state[F]);
+
+                    /* Update the return val for this function */
+                    function_summaries[F].return_val = new_summary.return_val;
+                }
+
+                /* Iterate over the functions from order vector revered (TOP DOWN)*/
+                for (Function *F : llvm::reverse(order))
+                {
+                    all_function_state[F] = intra_function_run(*F, function_summaries);
+                    for (auto &BB : *F)
                     {
-                        for (auto& I : BB)
+                        for (auto &I : BB)
                         {
-                            //figure out if instruction is a function call
+                            // figure out if instruction is a function call
                             if (isa<CallInst>(I))
                             {
-                                Function* calledFunc = cast<CallInst>(I).getCalledFunction();
-                                for (auto& arg : calledFunc->args())
+                                Function *calledFunc = cast<CallInst>(I).getCalledFunction();
+
+                                for (size_t i = 0; i < calledFunc->arg_size(); i++)
                                 {
-                                    outs() << arg << "\n";
-                                    //add to the summary the function arguments based on the function state we had before (it will already know if its constant or not)
-                                    LVal paramVal = evalValue(cast<Value>(&arg), function_state.at(&BB).out);
-                                    function_summaries[calledFunc].params[&arg] = (meetVal(paramVal, function_summaries[F].return_val));
+                                    // add to the summary the function arguments based on the function state we had before (it will already know if its constant or not)
+                                    Value *arg = calledFunc->getArg(i);
+                                    Value *actualArg = cast<CallInst>(I).getArgOperand(i);
+                                    LVal paramVal = evalValue(actualArg, all_function_state[F].at(&BB).out);
+                                    LVal prev = function_summaries[calledFunc].params[arg];
+                                    LVal new_val = meetVal(paramVal, prev);
+                                    if (prev != new_val)
+                                    {
+                                        function_summaries[calledFunc].params[arg] = new_val;
+                                        changed = true;
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-
-
-
-            for (Function& F : M)
+            outs() << "\n=== Final Summaries ===\n";
+            for (Function *F : order)
             {
-                for (auto& arg : F.args())
+                outs() << F->getName() << ":\n";
+
+                outs() << "  params: [ ";
+                for (auto &[key, val] : function_summaries[F].params)
                 {
-                    outs()
-                        << F.getName() << " Params: ";
-                    if (function_summaries[&F].params[&arg].kind == Kind::Const)
-                        outs() << "Const(" << function_summaries[&F].params[&arg].c << ")\n";
-                    else if (function_summaries[&F].params[&arg].kind == Kind::Top)
-                        outs() << "Top\n";
+                    key->printAsOperand(outs(), false);
+                    outs() << "=";
+                    if (val.kind == Kind::Const)
+                        outs() << "Const(" << val.c << ")";
+                    else if (val.kind == Kind::Top)
+                        outs() << "Top";
                     else
-                        outs() << "Bottom\n";
+                        outs() << "Bottom";
+                    outs() << " ";
+                }
+                outs() << "]\n";
+
+                outs() << "  return: ";
+                if (function_summaries[F].return_val.kind == Kind::Const)
+                    outs() << "Const(" << function_summaries[F].return_val.c << ")\n";
+                else if (function_summaries[F].return_val.kind == Kind::Top)
+                    outs() << "Top\n";
+                else
+                    outs() << "Bottom\n";
+            }
+            /* TODO 3: Do the actual folding for the constants (Should be able to pull a lot of this and do it on a function level)*/
+            for (Function *F : order)
+            {
+                std::vector<Instruction *> inst_to_delete;
+                /* Do the constant propagation for each call if it returns a cosntant */
+                for (auto &BB : *F)
+                {
+                    for (auto &I : BB)
+                    {
+                        // figure out if instruction is a function call
+                        if (isa<CallInst>(I))
+                        {
+                            Function *calledFunc = cast<CallInst>(I).getCalledFunction();
+                            if (!calledFunc || !function_summaries.count(calledFunc))
+                                continue;
+
+                            /* Check if the return of the called function is constant */
+                            if (function_summaries[calledFunc].return_val.kind == Kind::Const)
+                            {
+                                /* Get the actual value of the constant int for replace all uses */
+                                Value *const_val = ConstantInt::getSigned(I.getType(), function_summaries[calledFunc].return_val.c);
+                                I.replaceAllUsesWith(const_val);
+                                /* Add the instruction to ones to delete later */
+                                inst_to_delete.push_back(&I);
+                            }
+                        }
+                    }
+                }
+                /* Do folding for each constant expression too */
+                for (auto &BB : *F)
+                {
+                    for (auto &I : BB)
+                    {
+                        if (I.getType()->isVoidTy())
+                            continue;
+                        if (isa<CallInst>(I))
+                            continue;
+
+                        LVal val = all_function_state[F].at(&BB).out.lookup(&I);
+                        if (val.kind == Kind::Const)
+                        {
+                            Value *const_val = ConstantInt::getSigned(I.getType(), val.c);
+                            I.replaceAllUsesWith(const_val);
+                            /* Add the instruction to ones to delete later */
+                            inst_to_delete.push_back(&I);
+                        }
+                    }
+                }
+                /* Fold constant branches */
+                for (auto &BB : *F)
+                {
+                    if (auto *BI = dyn_cast<BranchInst>(BB.getTerminator()))
+                    {
+                        if (!BI->isConditional())
+                            continue;
+                        Value *cond = BI->getCondition();
+                        LVal cond_val;
+                        if (auto *I = dyn_cast<ConstantInt>(cond))
+                        {
+                            cond_val = LVal::constant(I->getZExtValue());
+                        }
+                        else
+                        {
+
+                            cond_val = all_function_state[F].at(&BB).out.lookup(cond);
+                        }
+                        /* Check the branch and see if its constant */
+                        if (cond_val.kind == Kind::Const)
+                        {
+                            /* The value here represents if were always going to take the first path in the cmp branching */
+                            BasicBlock *branch;
+                            BasicBlock *dead_branch;
+                            if (cond_val.c == 1)
+                            {
+                                /* If were taking this branch we want to replace this current unconditional branch with just a jump */
+                                branch = BI->getSuccessor(0);
+                                dead_branch = BI->getSuccessor(1);
+                                /* If we dont remove the dead branch other instructions that use it fail */
+                                dead_branch->removePredecessor(&BB);
+                                /* Now we can make the new branch */
+                                BranchInst::Create(branch, BI->getIterator());
+                                BI->eraseFromParent();
+                            }
+                            else
+                            {
+                                /* If we dont take the first branch we know we want to jump to the second successor */
+                                branch = BI->getSuccessor(1);
+                                dead_branch = BI->getSuccessor(0);
+                                /* If we dont remove the dead branch other instructions that use it fail */
+                                dead_branch->removePredecessor(&BB);
+                                /* Now we can make the new branch */
+                                BranchInst::Create(branch, BI->getIterator());
+                                BI->eraseFromParent();
+                            }
+                        }
+                    }
+                }
+                /* Actually delete unused instructions */
+                for (Instruction *I : inst_to_delete)
+                {
+                    I->eraseFromParent();
                 }
             }
 
-            /* Needs before this run function is edited:
-            - Create summary struct with states for args and return
-            - Edit intra run function to take in summary and fill out those field
-            */
-            /* Steps for this function:
-            - Initialize summary
-            - Iterate over call graph and pass in summary
-            */
-            /* NOTE: Will probably be easier to implement this separating the arguments and return into two different functions */
-            /* NOTE2: Not sure exactly, seems like it might need multiple passes at first (maybe should be a while loop checking summaries for no changes and then ends)*/
-
-            /* TODO 2: Iterate top down with summaries param values on intra run function again */
-            /* This will involve rerunning the intra function to get the state now that the parameters are not all top like they would've been for the first pass*/
-            /* The second part will be checking all the call sites for constants */
-
-            /* TODO 3: Do the actual folding for the constants (Should be able to pull a lot of this and do it on a function level)*/
-
-            return PreservedAnalyses::all();
+            return PreservedAnalyses::none();
         }
     };
 }
