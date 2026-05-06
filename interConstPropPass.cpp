@@ -297,9 +297,9 @@ namespace
         /* The function pass for const prop (UNCHANGED AS OF RIGHT NOW)*/
         DenseMap<const BasicBlock *, BlockState> intra_function_run(Function &F, DenseMap<const Function *, summary_t> summaries)
         {
-            outs() << "=== ";
-            F.printAsOperand(outs(), false);
-            outs() << " ===\n";
+            // outs() << "=== ";
+            // F.printAsOperand(outs(), false);
+            // outs() << " ===\n";
 
             std::vector<const Value *> domain;
             /* Add function arguments to the domain as well*/
@@ -373,14 +373,14 @@ namespace
                 }
             }
 
-            for (BasicBlock *BB : order)
-            {
-                outs() << "BB: ";
-                BB->printAsOperand(outs(), false);
-                outs() << "\n";
-                printState(outs(), "IN", st[BB].in, domain);
-                printState(outs(), "OUT", st[BB].out, domain);
-            }
+            // for (BasicBlock *BB : order)
+            // {
+            //     outs() << "BB: ";
+            //     BB->printAsOperand(outs(), false);
+            //     outs() << "\n";
+            //     printState(outs(), "IN", st[BB].in, domain);
+            //     printState(outs(), "OUT", st[BB].out, domain);
+            // }
             return st;
         }
 
@@ -488,7 +488,7 @@ namespace
                     }
                 }
             }
-            outs() << "\n=== Final Summaries ===\n";
+            outs() << "\n=== Summaries ===\n";
             for (Function *F : order)
             {
                 outs() << F->getName() << ":\n";
@@ -517,6 +517,11 @@ namespace
                     outs() << "Bottom\n";
             }
             /* TODO 3: Do the actual folding for the constants (Should be able to pull a lot of this and do it on a function level)*/
+            /* Add counters for constant, instructions, and branches */
+            int constants_discovered = 0;
+            int instructions_eliminated = 0;
+            int dead_branches_folded = 0;
+
             for (Function *F : order)
             {
                 std::vector<Instruction *> inst_to_delete;
@@ -598,6 +603,8 @@ namespace
                                 /* Now we can make the new branch */
                                 BranchInst::Create(branch, BI->getIterator());
                                 BI->eraseFromParent();
+                                dead_branches_folded++;
+                                instructions_eliminated++;
                             }
                             else
                             {
@@ -609,6 +616,8 @@ namespace
                                 /* Now we can make the new branch */
                                 BranchInst::Create(branch, BI->getIterator());
                                 BI->eraseFromParent();
+                                dead_branches_folded++;
+                                instructions_eliminated++;
                             }
                         }
                     }
@@ -617,8 +626,14 @@ namespace
                 for (Instruction *I : inst_to_delete)
                 {
                     I->eraseFromParent();
+                    constants_discovered++;
+                    instructions_eliminated++;
                 }
             }
+
+            outs() << "  Constants discovered:    " << constants_discovered << "\n";
+            outs() << "  Instructions eliminated: " << instructions_eliminated << "\n";
+            outs() << "  Dead branches folded:    " << dead_branches_folded << "\n";
 
             return PreservedAnalyses::none();
         }
