@@ -1,5 +1,35 @@
 # interprocedural\_constant\_propagation
 
+For simplicity we decided to follow the same exact process as the previous homework assignments so everything works functionally the same. All these files were simply adapted to fit the final assignment passes.
+
+
+
+\## Build
+
+
+
+```bash
+
+make
+
+```
+
+
+
+This builds `build/interConstPropPass.so` and `intraConstPropPass.so`.
+
+
+
+\## Run all tests
+
+
+
+```bash
+
+make tests
+
+```
+
 
 
 
